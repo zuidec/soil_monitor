@@ -1,0 +1,11 @@
+# Arduino IDE compiler files
+*.json
+*.svd
+debug.cfg
+
+*.d
+
+# Executeables
+*.exe
+*.out
+*.app
