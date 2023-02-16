@@ -14,16 +14,16 @@ date_default_timezone_set("America/Los_Angeles");		// Set timezone to PST
 $servername = "localhost";
 
 // REPLACE with your Database name
-$dbname = "soil_data";
+$dbname = "x";
 // REPLACE with Database user
-$username = "soil_monitor";
+$username = "x";
 // REPLACE with Database user password
-$password = "Jonagu25!!";
+$password = "x";
 
 
 // Keep this API Key value to be compatible with the ESP32 code provided in the project page.
 // If you change this value, the ESP32 sketch needs to match
-$api_key_value = "tPmAT5Ab3j7F9";
+$api_key_value = "x";
 
 $api_key= $sensor = $location = $value1 = $value2 = $value3 = "";
 
@@ -43,10 +43,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if ($conn->connect_error) {
             die("Connection failed: " . $conn->connect_error);
         }
-		$date = date('d-m-y h:i:s');
+		$date = date('m/d/y h:i:s');
         //$sql = "INSERT INTO SensorData (sensor, location, value1, value2, value3)
         //VALUES ('" . $sensor . "', '" . $location . "', '" . $value1 . "', '" . $value2 . "', '" . $value3 . "')";
-        $sql = "INSERT INTO "$plantname"_soil (time,moisture)
+        $sql = "INSERT INTO " . $plantname . "_soil (time,moisture)
         VALUES ('" . $date . "','" . $moisture_level . "')";
         if ($conn->query($sql) === TRUE) {
             echo "New record created successfully";
@@ -72,3 +72,4 @@ function test_input($data) {
     $data = htmlspecialchars($data);
     return $data;
 }
+

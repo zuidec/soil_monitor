@@ -15,11 +15,11 @@
 $servername = "localhost";
 
 // REPLACE with your Database name
-$dbname = "soil_data";
+$dbname = "x";
 // REPLACE with Database user
-$username = "soil_monitor";
+$username = "x";
 // REPLACE with Database user password
-$password = "Jonagu25!!";
+$password = "x";
 
 
 // Create connection
@@ -65,3 +65,4 @@ $conn->close();
 </table>
 </body>
 </html>
+
