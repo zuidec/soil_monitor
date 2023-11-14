@@ -1,24 +1,35 @@
-// this sample code provided by www.programmingboss.com
-//#include <SoftwareSerial.h>
+/*
+ *	main.cpp
+ *	Soil monitor for ESP32
+ *
+ *	Created by zuidec on 11/13/23
+ */
+
+#include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+
+#include "PlantPacket.h"
+#include "credentials.h"
+#include "wifiFix.h"
+
 #define soil_rx 3 // data pin from soil sensor
 #define soil_pwr 18 // pwn pin to power sensor
 #define sleep_time 14400000000
+
+WiFiClient* client = new WiFiClientFixed();
+
 const int air_moisture = 1024;
 const int water_moisture = 500;
 
-const char* ssid = "NETGEAR29";
-const char* password = "festiveunicorn516";
-const char* serverName = "http://192.168.0.22/soil_monitor/post_esp_data.php";
 const char* plantName = "phineas"; // Designates which plant's table to put data into
 
 int rawSoilMoisture;  // Will hold the raw analog read data from the sensor
 int percentMoisture;  // Hold a usable percent moisture level to transmit to database
 
 int bootCount = 0;
-
-String apiKeyValue = "tPmAT5Ab3j7F9";
+void readSoilLevel(void);
+void initWiFi(void);
 
 void setup() {
   // put your setup code here, to run once:
@@ -28,16 +39,17 @@ void setup() {
   pinMode(soil_pwr, OUTPUT);
   esp_sleep_enable_timer_wakeup( sleep_time);
 }
+
 void loop() {
   if(bootCount%4==0)
   {
    // Serial.println(Serial1.readStringUntil('\n'));
    if(WiFi.status()==WL_CONNECTED)
    {
-      WiFiClient client;
+      //WiFiClient client;
       HTTPClient http;
 
-      http.begin(client, serverName);
+      http.begin(*client, serverName);
       http.addHeader("Content-Type","application/x-www-form-urlencoded");
   
       delay(5000);
@@ -79,6 +91,7 @@ void loop() {
   bootCount++;
   esp_deep_sleep_start();
 }
+
 void initWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
@@ -89,6 +102,7 @@ void initWiFi() {
   }
   Serial.println(WiFi.localIP());
 }
+
 void readSoilLevel()
 {
   digitalWrite(soil_pwr, HIGH);
