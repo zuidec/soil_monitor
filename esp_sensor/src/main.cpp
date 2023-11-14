@@ -13,21 +13,24 @@
 #include "credentials.h"
 #include "wifiFix.h"
 
-#define soil_rx 3 // data pin from soil sensor
-#define soil_pwr 18 // pwn pin to power sensor
-#define sleep_time 14400000000
+#define STR(s)      ST(s)
+#define ST(s)       #s
+#define soil_rx     3 // data pin from soil sensor
+#define soil_pwr    18 // pwn pin to power sensor
+#define sleep_time  14400000000
 
 WiFiClient* client = new WiFiClientFixed();
 
-const int air_moisture = 1024;
-const int water_moisture = 500;
+//const char* ssid          = defined in credentials.h
+//const char* password      = defined in credentials.h
+//const char* serverName    = defined in credentials.h
+const char* plantName       = STR(PLANT_NAME); // Designates which plant's table to put data into
+const int air_moisture      = 1024;
+const int water_moisture    = 500;
+int rawSoilMoisture         = 0;  // Will hold the raw analog read data from the sensor
+int percentMoisture         = 0;  // Hold a usable percent moisture level to transmit to database
+int bootCount               = 0;
 
-const char* plantName = "phineas"; // Designates which plant's table to put data into
-
-int rawSoilMoisture;  // Will hold the raw analog read data from the sensor
-int percentMoisture;  // Hold a usable percent moisture level to transmit to database
-
-int bootCount = 0;
 void readSoilLevel(void);
 void initWiFi(void);
 
