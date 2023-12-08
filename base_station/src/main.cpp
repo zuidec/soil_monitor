@@ -104,7 +104,7 @@ bool InitializeRadio()  {
 
   // Initialize radio settings
   radio.setPALevel(RF24_PA_LOW);
-  radio.setDataRate(RF24_2MBPS);
+  radio.setDataRate(RF24_250KBPS);
   radio.openReadingPipe(1, baseStationAddress);
   radio.setPayloadSize(sizeof(buffer));
   radio.flush_rx();

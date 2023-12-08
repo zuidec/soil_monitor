@@ -100,7 +100,7 @@ bool InitializeRadio()  {
 
     // Initialize radio settings
     radio.setPALevel(RF24_PA_MAX);
-    radio.setDataRate(RF24_2MBPS);
+    radio.setDataRate(RF24_250KBPS);
     radio.setPayloadSize(sizeof(buffer));
     radio.openWritingPipe(baseStationAddress);
     radio.stopListening();
