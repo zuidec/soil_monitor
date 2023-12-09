@@ -3,7 +3,7 @@
 - Use credentials.h to define sensitive information needed to login to WiFi or  
 communicate with server.
 
-```c
+```c++
     const char* ssid        = "ssid_name";   
     const char* password    = "password";   
     const char* serverName  = "server_address";  
