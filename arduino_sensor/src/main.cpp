@@ -3,7 +3,7 @@
  *  then transmit the reading using NRF24L01 to a base station
  * 
  *  Author: Case Zuiderveld
- *  Last updated 5/28/2023
+ *  Last updated 1/17/2024
  */
 
 #include <Arduino.h>
@@ -17,7 +17,6 @@
 // PlantPacket.h has the functions to make packets for sending wirelessly
 #include "PlantPacket.h"
 
-// Define all the pins so we can call them by name
 #define SOIL_SENSOR_PWR_PIN   (5)
 #define SOIL_SENSOR_DATA_PIN  (A0)
 #define NRF24L01_MOSI_PIN     (11)
