@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 // wifiFix needed to fix a bug with the WiFi library
+#include "WiFiType.h"
 #include "wifiFix.h"    
 // FastLED for onboard RGB LED control
 #include <FastLED.h>
@@ -33,7 +34,9 @@
 
 #define BUFFER_LENGTH           (16)
 #define NUM_LEDS                (1)
-#define TIMER_PERIOD_MS         (30000)
+#define UPDATE_PERIOD_MS        (30000)
+#define WIFI_TIMEOUT_MS         (10000)
+#define MS_PER_S                (1000)
 
 // Objects
 RF24 radio(NRF24L01_CE_PIN, NRF24L01_CSN_PIN);
@@ -49,12 +52,13 @@ unsigned long timer             = 0;
 // Functions
 bool InitializeRadio();
 bool InitializeWifi();
-bool UpdateMoistureDatabase(const char* plantName, int percentMoisture);
-bool SendPushNotification(const char* notification, const char* topic);
+bool IsWiFiReady();  
+void UpdateMoistureDatabase(const char* plantName, int percentMoisture);
+void SendPushNotification(const char* notification, const char* topic);
 void UpdatePushNotifications(const char* plantName, int percentMoisture);
+void GetPlantPacket();
 void ClearBuffer(uint8_t *buffer, int bufferLength);
 void SetLEDColor(CRGB color);
-void UpdateLED();
 
 //
 //
@@ -74,19 +78,19 @@ void setup() {
     if(!InitializeRadio())  {
         Serial.println("Failed to initialize radio");
         SetLEDColor(CRGB::Red);
-        delay(60000);
+        delay(WIFI_TIMEOUT_MS);
+        Serial.println("Returning to setup"); 
         setup();
     }
 
     if(!InitializeWifi()) {
         Serial.println("Failed to initialize WiFi");
         SetLEDColor(CRGB::Red);
-        delay(60000);
+        delay(WIFI_TIMEOUT_MS); 
         Serial.println("Returning to setup"); 
         setup();
     }
 
-    //delay(1000);
     SetLEDColor(CRGB::Green);
     Serial.println("Waiting for plant packets...");
     timer = millis();
@@ -95,20 +99,16 @@ void setup() {
 void loop() {
   
     if(radio.available()) {
-        radio.read(&buffer, sizeof(buffer));
-        packet.ParsePlantPacket(&buffer[0]);
-        ClearBuffer(&buffer[0], BUFFER_LENGTH);
-        Serial.print(packet.plantName);
-        Serial.println(packet.percentSoilLevel); 
-
+        
+        GetPlantPacket();
         UpdateMoistureDatabase(packet.plantName, (int)packet.percentSoilLevel);
         UpdatePushNotifications(packet.plantName, (int)packet.percentSoilLevel);
 
         Serial.println("Waiting for plant packets...");
     }
-
-    if(timer - millis() >= TIMER_PERIOD_MS)   {
-        UpdateLED();
+    
+    if(timer - millis() >= UPDATE_PERIOD_MS)   { 
+        (void) IsWiFiReady();
         timer = millis();
     }
     if(timer > millis())    {
@@ -134,7 +134,7 @@ bool InitializeRadio()  {
     radio.startListening();
 
     if(!radio.isChipConnected())  {
-        Serial.println("Radio chip not connected");
+        Serial.println("Radio not connected!");
         return false;
     }
 
@@ -147,108 +147,97 @@ bool InitializeWifi() {
     WiFi.begin(ssid, password);
     Serial.print("Connecting to WiFi ..");
 
-    for (int i=0; WiFi.status() != WL_CONNECTED && i<=10; i++) {
+    for (int i=0; WiFi.status() != WL_CONNECTED && i<=(WIFI_TIMEOUT_MS/MS_PER_S); i++) {
         Serial.print('.');
         delay(1000);
 
-        if(i==10) {
+        if(i==(WIFI_TIMEOUT_MS/MS_PER_S)) {
+            Serial.println(" connection timed out!");
+            WiFi.disconnect(true, true);
             return false;
         }
     }
 
+    Serial.print(" connected! IP address: ");
     Serial.println(WiFi.localIP());
     return true;
 }
 
-bool UpdateMoistureDatabase(const char* plant, int percentMoisture) {
+void UpdateMoistureDatabase(const char* plant, int percentMoisture) {
   
-    if(WiFi.status() != WL_CONNECTED) {
-        WiFi.reconnect();
-
-        if(WiFi.status() != WL_CONNECTED) {
-            SetLEDColor(CRGB::Red);
-            return false;
-        }
+    if(!IsWiFiReady())  {
+        Serial.println("Database updated aborted, wifi is not connected!");
+        return;
     }
 
     HTTPClient http;
-
     http.begin(*client, serverName);
     http.addHeader("Content-Type","application/x-www-form-urlencoded");
 
     String httpRequestData = "api_key=" +  apiKeyValue + "&moisture=" + percentMoisture + "%&plantname=" + plant + "";
-    Serial.print("httpRequestData: ");
+    Serial.print("Database request data:: ");
     Serial.println(httpRequestData);
 
     int httpResponseCode = http.POST(httpRequestData);
 
-    if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
+    if (httpResponseCode==200) {
+        Serial.println("Database updated successfully!");
+        http.end();
+    }
+    else if (httpResponseCode>0) {
+        Serial.print("Unknown database update result, http response code: ");
         Serial.println(httpResponseCode);
         http.end();
-        return true;
     }
     else {
-        Serial.print("Error code: ");
+        Serial.print("Database update failed, http response code: ");
         Serial.println(httpResponseCode);
         http.end();
-        return false;
-    }
-    
-    if(percentMoisture <= 50)   {
-        
     }
 }
 
-bool SendPushNotification(const char* notification, const char* topic)    {
+void SendPushNotification(const char* notification, const char* topic)    {
 
-    if(WiFi.status() != WL_CONNECTED) {
-        WiFi.reconnect();
-
-        if(WiFi.status() != WL_CONNECTED) {
-            SetLEDColor(CRGB::Red);
-            return false;
-        }
+    if(!IsWiFiReady())  {
+        Serial.println("Push notification aborted, wifi is not connected!");
+        return;
     }
 
     HTTPClient http;
-    char address[32] = "";
-    sprintf(address, "http://%s:8080/%s", ntfyServer, topic);  
-    
+    char address[64] = "";
+    sprintf(address, "%s:8080/%s", ntfyServer, topic);  
     http.begin(*client, address);
     http.addHeader("Content-Type","text/plain");
 
-    Serial.print("Notification: ");
+    Serial.print("Push notification request data: ");
     Serial.println(notification);
 
     int httpResponseCode = http.POST(notification);
 
-    if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
+
+    if (httpResponseCode==200) {
+        Serial.println("Push notification sent successfully!");
+        http.end();
+    }
+    else if (httpResponseCode>0) {
+        Serial.print("Unknown notification result, http response code: ");
         Serial.println(httpResponseCode);
         http.end();
-        return true;
     }
     else {
-        Serial.print("Error code: ");
+        Serial.print("Push notifcation failed, http response code: ");
         Serial.println(httpResponseCode);
         http.end();
-        return false;
     }
-}    
+} 
+
 void UpdatePushNotifications(const char* plantName, int percentMoisture)   {
 
     if(percentMoisture <= 50)   {
-        bool status = SendPushNotification("Soil moisture is below 50%, water soon!", plantName);
-        if(!status) {
-            Serial.println("Notification failed");
-        }
+        SendPushNotification("Soil moisture is below 50%, water soon!", plantName);
     }
     else if(percentMoisture <= 40)   {
-        bool status = SendPushNotification("Soil moisture is below 40%, water now!", plantName);
-        if(!status) {
-            Serial.println("Notification failed");
-        }
+        SendPushNotification("Soil moisture is below 40%, water now!", plantName);
     }
 }
 
@@ -262,20 +251,38 @@ void ClearBuffer(uint8_t *buffer, int bufferLength) {
 void SetLEDColor(CRGB color)  {
 
     FastLED.clear();
+    delay(10);
     led[0] = color;
     FastLED.show();
 }
 
-void UpdateLED()    {
+bool IsWiFiReady()  {
 
     if(WiFi.status() != WL_CONNECTED) {
-        WiFi.reconnect();
+        Serial.print("Problem with wifi connection, attempting to reconnect... ");
+        WiFi.disconnect();
+        WiFi.begin(ssid, password);
 
-        if(WiFi.status() != WL_CONNECTED) {
+        if(WiFi.waitForConnectResult(WIFI_TIMEOUT_MS)!=WL_CONNECTED)  {
             SetLEDColor(CRGB::Red);
+            WiFi.disconnect(true,true);
+            Serial.println("reconnect failed!");
+            return false;
         }
+
+        Serial.print("reconnect successful! IP address: ");
+        Serial.println(WiFi.localIP());
     }
-    else    {
-        SetLEDColor(CRGB::Green);
-    }
+
+    SetLEDColor(CRGB::Green);
+    return true;
+}
+
+void GetPlantPacket()   {
+
+        radio.read(&buffer, sizeof(buffer));
+        packet.ParsePlantPacket(&buffer[0]);
+        ClearBuffer(&buffer[0], BUFFER_LENGTH);
+        Serial.print(packet.plantName);
+        Serial.println(packet.percentSoilLevel); 
 }

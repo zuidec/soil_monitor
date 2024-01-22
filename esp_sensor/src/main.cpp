@@ -6,112 +6,194 @@
  */
 
 #include <Arduino.h>
+// cstdio for sprintf
+#include <cstdio>
+#include <sys/_stdint.h>
+// WiFi and HTTPClient for transmitting soil levels to the database
 #include <WiFi.h>
 #include <HTTPClient.h>
-
-#include "PlantPacket.h"
-#include "credentials.h"
+// wifiFix needed to fix a bug with the WiFi library
 #include "wifiFix.h"
+#include "esp_sleep.h"
+// serverName, ssid, password, ntfyServer, and apiKey are all defined in credentials.h
+#include "credentials.h"
 
-#define STR(s)      ST(s)
-#define ST(s)       #s
-#define soil_rx     3 // data pin from soil sensor
-#define soil_pwr    18 // pwn pin to power sensor
-#define sleep_time  14400000000
+// These define macros are needed to pass the plantName to the compiler as a 
+// define at build time
+#define STR(s)                  ST(s)
+#define ST(s)                   #s
+
+#define SOIL_RX_PIN             (3) 
+#define SOIL_PWR_PIN            (18) 
+#define SLEEP_TIME_MS           (14400000000)
+#define WIFI_TIMEOUT_MS         (10000)
+#define MS_PER_S                (1000)
 
 WiFiClient* client = new WiFiClientFixed();
 
-//const char* ssid          = defined in credentials.h
-//const char* password      = defined in credentials.h
-//const char* serverName    = defined in credentials.h
-const char* plantName       = STR(PLANT_NAME); // Designates which plant's table to put data into
-const int air_moisture      = 1024;
-const int water_moisture    = 500;
-int rawSoilMoisture         = 0;  // Will hold the raw analog read data from the sensor
-int percentMoisture         = 0;  // Hold a usable percent moisture level to transmit to database
-int bootCount               = 0;
+const char* plantName           = STR(PLANT_NAME); 
+const int air_moisture          = 1024;
+const int water_moisture        = 500;
 
-void readSoilLevel(void);
-void initWiFi(void);
+int ReadSoilLevel();
+bool InitializeWifi();
+bool IsWiFiReady();  
+void UpdateMoistureDatabase(const char* plantName, int percentMoisture);
+void SendPushNotification(const char* notification, const char* topic);
+void UpdatePushNotifications(const char* plantName, int percentMoisture);
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(115200);
-  initWiFi();
-  analogReadResolution(10);
-  pinMode(soil_pwr, OUTPUT);
-  esp_sleep_enable_timer_wakeup( sleep_time);
+    
+    Serial.begin(115200);
+    analogReadResolution(10);
+    pinMode(SOIL_PWR_PIN, OUTPUT);
+    esp_sleep_enable_timer_wakeup(SLEEP_TIME_MS);
+
+    if(!InitializeWifi()) {
+        Serial.println("Failed to initialize WiFi");
+        delay(WIFI_TIMEOUT_MS); 
+        Serial.println("Returning to sleep"); 
+        esp_deep_sleep_start();
+    }
+
 }
 
 void loop() {
-  if(bootCount%4==0)
-  {
-   // Serial.println(Serial1.readStringUntil('\n'));
-   if(WiFi.status()==WL_CONNECTED)
-   {
-      //WiFiClient client;
-      HTTPClient http;
 
-      http.begin(*client, serverName);
-      http.addHeader("Content-Type","application/x-www-form-urlencoded");
+    int soilLevel = ReadSoilLevel();
+    UpdateMoistureDatabase(plantName, soilLevel);
+    UpdatePushNotifications(plantName, soilLevel);
+
+    Serial.println("Going to sleep...");
+    esp_deep_sleep_start();
+}
+
+bool InitializeWifi() {
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    Serial.print("Connecting to WiFi ..");
+
+    for (int i=0; WiFi.status() != WL_CONNECTED && i<=(WIFI_TIMEOUT_MS/MS_PER_S); i++) {
+        Serial.print('.');
+        delay(1000);
+
+        if(i==(WIFI_TIMEOUT_MS/MS_PER_S)) {
+            Serial.println(" connection timed out!");
+            WiFi.disconnect(true, true);
+            return false;
+        }
+    }
+
+    Serial.print(" connected! IP address: ");
+    Serial.println(WiFi.localIP());
+    return true;
+}
+
+bool IsWiFiReady()  {
+
+    if(WiFi.status() != WL_CONNECTED) {
+        Serial.print("Problem with wifi connection, attempting to reconnect... ");
+        WiFi.disconnect();
+        WiFi.begin(ssid, password);
+
+        if(WiFi.waitForConnectResult(WIFI_TIMEOUT_MS)!=WL_CONNECTED)  {
+            WiFi.disconnect(true,true);
+            Serial.println("reconnect failed!");
+            return false;
+        }
+
+        Serial.print("reconnect successful! IP address: ");
+        Serial.println(WiFi.localIP());
+    }
+
+    return true;
+}
+
+int ReadSoilLevel()    {
+
+    digitalWrite(SOIL_PWR_PIN, HIGH);
+    delay(250);
+    int rawSoilMoisture = analogRead(SOIL_RX_PIN);
+    digitalWrite(SOIL_PWR_PIN, LOW);
+
+    return map(rawSoilMoisture, air_moisture, water_moisture, 0, 100);
+}
+
+void UpdateMoistureDatabase(const char* plant, int percentMoisture) {
   
-      delay(5000);
+    if(!IsWiFiReady())  {
+        Serial.println("Database updated aborted, wifi is not connected!");
+        return;
+    }
 
-      readSoilLevel();
-      Serial.print("Raw moisture level: ");
-      Serial.println(rawSoilMoisture);
-      Serial.print("Soil moisture level: ");
-      Serial.println(percentMoisture);
-      // Set up a string with our post request
-      String httpRequestData = "api_key=" + apiKeyValue + "&moisture=" + percentMoisture + "%&plantname=" + plantName + "";
+    HTTPClient http;
+    http.begin(*client, serverName);
+    http.addHeader("Content-Type","application/x-www-form-urlencoded");
 
-      Serial.print("httpRequestData: ");
-      Serial.println(httpRequestData);
-    
+    String httpRequestData = "api_key=" +  apiKeyValue + "&moisture=" + percentMoisture + "%&plantname=" + plant + "";
+    Serial.print("Database request data: ");
+    Serial.println(httpRequestData);
 
+    int httpResponseCode = http.POST(httpRequestData);
 
-      // Send HTTP POST request
-      int httpResponseCode = http.POST(httpRequestData);
-     
-
-      if (httpResponseCode>0) {
-        Serial.print("HTTP Response code: ");
+    if (httpResponseCode==200) {
+        Serial.println("Database updated successfully!");
+        http.end();
+    }
+    else if (httpResponseCode>0) {
+        Serial.print("Unknown database update result, http response code: ");
         Serial.println(httpResponseCode);
-      }
-      else {
-        Serial.print("Error code: ");
+        http.end();
+    }
+    else {
+        Serial.print("Database update failed, http response code: ");
         Serial.println(httpResponseCode);
-      }
-      // Free resources
-      http.end();
-   }
-   else
-   {
-     Serial.println(F("Wifi disconnected..."));
-   }
-   bootCount = 0;
-  }
-  bootCount++;
-  esp_deep_sleep_start();
+        http.end();
+    }
 }
 
-void initWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi ..");
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print('.');
-    delay(1000);
-  }
-  Serial.println(WiFi.localIP());
-}
+void SendPushNotification(const char* notification, const char* topic)    {
 
-void readSoilLevel()
-{
-  digitalWrite(soil_pwr, HIGH);
-  delay(250);
-  rawSoilMoisture = analogRead(soil_rx);
-  digitalWrite(soil_pwr, LOW);
+    if(!IsWiFiReady())  {
+        Serial.println("Push notification aborted, wifi is not connected!");
+        return;
+    }
 
-  percentMoisture = map(rawSoilMoisture, air_moisture, water_moisture, 0, 100);
+    HTTPClient http;
+    char address[64] = "";
+    sprintf(address, "%s:8080/%s", ntfyServer, topic);  
+    http.begin(*client, address);
+    http.addHeader("Content-Type","text/plain");
+
+    Serial.print("Push notification request data: ");
+    Serial.println(notification);
+
+    int httpResponseCode = http.POST(notification);
+
+
+    if (httpResponseCode==200) {
+        Serial.println("Push notification sent successfully!");
+        http.end();
+    }
+    else if (httpResponseCode>0) {
+        Serial.print("Unknown notification result, http response code: ");
+        Serial.println(httpResponseCode);
+        http.end();
+    }
+    else {
+        Serial.print("Push notifcation failed, http response code: ");
+        Serial.println(httpResponseCode);
+        http.end();
+    }
+} 
+
+void UpdatePushNotifications(const char* plantName, int percentMoisture)   {
+
+    if(percentMoisture <= 50)   {
+        SendPushNotification("Soil moisture is below 50%, water soon!", plantName);
+    }
+    else if(percentMoisture <= 40)   {
+        SendPushNotification("Soil moisture is below 40%, water now!", plantName);
+    }
 }
